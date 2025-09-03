@@ -1,0 +1,252 @@
+/*
+ * Fantastical Name Generator – Function Tool for SillyTavern
+ * Uses the `fantastical` package. If unavailable locally, loads from CDN.
+ */
+
+(function () {
+  const EXT_ID = 'ZhenyaPav/SillyTavern-Namegen';
+  const SETTINGS_KEY = 'fantastical_namegen';
+  const DEFAULTS = {
+    enableFunctionTool: true,
+    cdnUrl: 'https://cdn.jsdelivr.net/npm/fantastical@latest/dist/index.js',
+    preferCDN: true,
+    cacheModule: true,
+    showToasts: true,
+  };
+
+  /** Utility: read/write extension settings */
+  function getSettings() {
+    const ctx = SillyTavern.getContext();
+    const store = ctx.extensionSettings?.[SETTINGS_KEY] || {};
+    return { ...DEFAULTS, ...store };
+  }
+  function setSettings(partial) {
+    const ctx = SillyTavern.getContext();
+    const merged = { ...getSettings(), ...partial };
+    ctx.extensionSettings[SETTINGS_KEY] = merged;
+    ctx.saveSettingsDebounced?.();
+  }
+
+  /** Lightweight cache in the browser between sessions */
+  const ModuleCache = {
+    key: `${EXT_ID}:fantastical-src`,
+    async get() {
+      try { return (await localStorage.getItem(this.key)) || null; } catch (e) { return null; }
+    },
+    async set(code) {
+      try { localStorage.setItem(this.key, code); } catch (e) {}
+    },
+    async clear() { try { localStorage.removeItem(this.key); } catch (e) {} },
+  };
+
+  /**
+   * Dynamically import the `fantastical` library.
+   * Strategy:
+   * 1) If already loaded -> return.
+   * 2) If cached JS string exists and caching enabled -> import from a Blob URL.
+   * 3) Try local relative import (for cases when user `npm i fantastical` inside extension dir and the bundler exposes dist/index.js).
+   * 4) Fallback to CDN (jsDelivr). Optionally cache the fetched code.
+   */
+  async function loadFantastical() {
+    if (globalThis.__fantasticalLib) return globalThis.__fantasticalLib;
+
+    const { preferCDN, cdnUrl, cacheModule } = getSettings();
+
+    // 2) Load from cache (if any)
+    if (!preferCDN && cacheModule) {
+      const cached = await ModuleCache.get();
+      if (cached) {
+        try {
+          const url = URL.createObjectURL(new Blob([cached], { type: 'text/javascript' }));
+          const mod = await import(/* webpackIgnore: true */ url);
+          URL.revokeObjectURL(url);
+          if (mod && Object.keys(mod).length) {
+            globalThis.__fantasticalLib = mod;
+            return mod;
+          }
+        } catch (err) {
+          console.warn('[Fantastical] Failed to import from cache', err);
+        }
+      }
+    }
+
+    // 3) Try a local relative import (works if user placed the built file manually)
+    try {
+      const localCandidates = [
+        './node_modules/fantastical/dist/index.js',
+        './dist/index.js',
+      ];
+      for (const rel of localCandidates) {
+        try {
+          const mod = await import(/* webpackIgnore: true */ rel);
+          if (mod && Object.keys(mod).length) {
+            globalThis.__fantasticalLib = mod;
+            return mod;
+          }
+        } catch (_) { /* try next */ }
+      }
+    } catch (_) { /* ignore */ }
+
+    // 4) CDN fallback
+    try {
+      const url = cdnUrl;
+      // Fetch once (so we can optionally cache) and eval via Blob
+      const resp = await fetch(url, { cache: 'force-cache' });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const code = await resp.text();
+      if (cacheModule) await ModuleCache.set(code);
+      const blobUrl = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
+      const mod = await import(/* webpackIgnore: true */ blobUrl);
+      URL.revokeObjectURL(blobUrl);
+      globalThis.__fantasticalLib = mod;
+      return mod;
+    } catch (err) {
+      console.error('[Fantastical] Failed to load module from CDN:', err);
+      throw new Error('Fantastical module could not be loaded. Check your connection or CDN URL in settings.');
+    }
+  }
+
+  /** Map inputs to the library API */
+  function resolveGenerator(lib, category, type) {
+    // Allow both grouped and top-level exports
+    const groups = {
+      species: lib.species || {},
+      parties: lib.parties || {},
+      places: lib.places || {},
+      adventures: lib.adventures || {},
+    };
+
+    // Prefer grouped; otherwise try top-level function by name
+    let fn = groups[category]?.[type];
+    if (!fn && typeof lib[type] === 'function') fn = lib[type];
+
+    if (typeof fn !== 'function') {
+      throw new Error(`Unknown generator: ${category}.${type}`);
+    }
+
+    return fn;
+  }
+
+  async function generateNames({ category, type, gender = null, allowMultipleNames = false, count = 1 }) {
+    const lib = await loadFantastical();
+    const fn = resolveGenerator(lib, category, type);
+
+    const results = [];
+    for (let i = 0; i < Math.max(1, Math.min(50, Number(count) || 1)); i++) {
+      let name;
+      if (category === 'species') {
+        // species may accept options incl. gender and allowMultipleNames
+        const opts = {};
+        if (gender != null && String(gender).length) opts.gender = gender;
+        if (typeof allowMultipleNames === 'boolean') opts.allowMultipleNames = allowMultipleNames;
+        name = fn(opts);
+      } else {
+        // parties/places/adventures typically accept no options
+        name = fn();
+      }
+      results.push(String(name));
+    }
+
+    return results;
+  }
+
+  /** Register the Function Tool */
+  function registerTool() {
+    const ctx = SillyTavern.getContext();
+    const settings = getSettings();
+
+    if (!ctx.isToolCallingSupported?.()) {
+      console.warn('[Fantastical] Tool calling not supported or disabled.');
+      return;
+    }
+
+    if (!settings.enableFunctionTool) return;
+
+    ctx.registerFunctionTool({
+      name: 'fantasyName.generate',
+      displayName: 'Generate Fantasy Name(s)',
+      description: 'Generate fantasy names (species, parties, places, adventures) using the fantastical library. Use when the user asks for a fantasy name.',
+      parameters: {
+        $schema: 'http://json-schema.org/draft-04/schema#',
+        type: 'object',
+        properties: {
+          category: {
+            type: 'string',
+            description: 'Generator category: species, parties, places, adventures',
+            enum: ['species', 'parties', 'places', 'adventures'],
+          },
+          type: {
+            type: 'string',
+            description: 'Specific generator name within the category (e.g., human, elf, dwarf, goblin, mysticOrder, guild, tavern, adventure).',
+          },
+          gender: {
+            type: 'string',
+            description: "Optional gender for species that support it: 'male', 'female', or leave blank.",
+          },
+          allowMultipleNames: {
+            type: 'boolean',
+            description: 'For species.human: allow multiple-part names when true.',
+            default: false,
+          },
+          count: {
+            type: 'integer',
+            description: 'How many names to generate (1–50).',
+            minimum: 1,
+            maximum: 50,
+            default: 1,
+          }
+        },
+        required: ['category', 'type']
+      },
+      action: async (args) => {
+        const { showToasts } = getSettings();
+        try {
+          const names = await generateNames(args);
+          if (showToasts) SillyTavern.getContext().toast?.('Generated fantasy name(s)');
+          // Return as newline-joined string so it is readable in chat
+          return names.join('\n');
+        } catch (err) {
+          console.error('[Fantastical] Generation failed', err);
+          return `Error: ${err.message || err}`;
+        }
+      },
+      formatMessage: ({ category, type, count = 1 }) => {
+        const { showToasts } = getSettings();
+        if (!showToasts) return '';
+        return `Generating ${count} ${category}.${type} name(s)…`;
+      },
+      stealth: false,
+    });
+  }
+
+  /** UI hook for settings panel to refresh registration on toggle */
+  function reRegister() {
+    // Unregister by name then re-register
+    try { SillyTavern.getContext().unregisterFunctionTool?.('fantasyName.generate'); } catch (_) {}
+    registerTool();
+  }
+
+  /** Wire up when extensions are ready */
+  async function init() {
+    // Expose small API for debugging in console
+    globalThis.FantasticalNameGen = { loadFantastical, generateNames, reRegister, getSettings, setSettings };
+    registerTool();
+  }
+
+  // Register into the Extensions panel
+  try {
+    SillyTavern.getContext().registerExtension?.(EXT_ID, {
+      name: 'Fantastical Name Generator',
+      async init() { await init(); },
+      settings: {
+        get: getSettings,
+        set: setSettings,
+      },
+      onSettingsChange() { reRegister(); },
+    });
+  } catch (err) {
+    console.error('[Fantastical] Failed to register extension scaffold', err);
+    // Fallback: just init
+    init();
+  }
+})();
