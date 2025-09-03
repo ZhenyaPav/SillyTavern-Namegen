@@ -4,7 +4,7 @@
  */
 
 (function () {
-  const EXT_ID = 'ZhenyaPav/SillyTavern-Namegen';
+  const EXT_ID = 'SillyTavern-Namegen';
   // Backward/forward compatible bridge to ST APIs (global and ctx-based)
   const API = {
     ctx() {
@@ -291,10 +291,38 @@
         return mod;
       }
     } catch (err) {
-      console.error('[Fantastical] Failed to load fantastical module', err);
-      throw err;
+      console.warn('[Fantastical] Failed to load fantastical module, using built-in fallback', err);
     }
-    throw new Error('Fantastical module could not be loaded from local or CDN.');
+
+    // Built-in minimal fallback so the tool still works without external module
+    const FallbackLib = (function(){
+      function pick(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
+      const first = ['Ael','Bel','Cal','Del','El','Fen','Gal','Hal','Ith','Jun','Kor','Lor','Mar','Nor','Ori','Pav','Quin','Rin','Sor','Tor','Ulf','Val','Wyn','Xan','Yor','Zan'];
+      const last = ['bane','brook','crest','dusk','ember','forge','glen','hall','iron','jewel','kestrel','leaf','moon','night','oak','peak','quill','river','stone','thorn','vale','wind','yarrow','zephyr'];
+      const humanFirstMale = ['Arth','Bram','Ced','Dain','Edr','Falk','Garr','Hugh','Ivor','Jorr','Kael','Leof','Merr','Nev','Osric','Perr','Quent','Rolf','Sieg','Tris','Ulric','Varr','Warr','Xav','Yorr','Zed'];
+      const humanFirstFemale = ['Aria','Bryn','Celia','Dara','Elin','Faye','Gwen','Hana','Isla','Jora','Kara','Lina','Mira','Nora','Orla','Pia','Quin','Rhea','Sara','Tara','Una','Vera','Wyn','Xena','Yara','Zara'];
+      function human(opts={}){
+        const g = String(opts.gender||'').toLowerCase();
+        const f = g==='female'? pick(humanFirstFemale) : g==='male'? pick(humanFirstMale) : pick(humanFirstMale.concat(humanFirstFemale));
+        const l = pick(last);
+        return `${f} ${l}`;
+      }
+      function elf(){ return `${pick(['Ae','Eli','Iri','Olo','Uli'])}${pick(first)}${pick(['riel','thir','lith','veth','wen'])}`; }
+      function dwarf(){ return `${pick(['Bal','Dor','Far','Gim','Thra'])}${pick(['in','or','im','ar','um'])} ${pick(['Stonebeard','Ironfist','Deepdelver','Boulderhelm','Rockbiter'])}`; }
+      function goblin(){ return `${pick(['Sn','Gr','Kr','Tr','Br'])}${pick(['ik','og','ak','uk','ok'])}`; }
+      function guild(){ return `${pick(['Silver','Shadow','Golden','Crimson','Azure'])} ${pick(['Blades','Circle','Guild','Order','Syndicate'])}`; }
+      function tavern(){ return `The ${pick(['Prancing','Sleeping','Roaring','Dancing','Tipsy'])} ${pick(['Pony','Dragon','Lion','Wyvern','Goblin'])}`; }
+      function adventure(){ return `${pick(['Quest of the','Siege of the','Whispers of the','Shadows of the','Crown of the'])} ${pick(['Fallen King','Lost City','Eternal Night','Hidden Vale','Broken Blade'])}`; }
+      return {
+        species: { human, elf, dwarf, goblin },
+        parties: { guild },
+        places: { tavern },
+        adventures: { adventure },
+      };
+    })();
+
+    globalThis.__fantasticalLib = FallbackLib;
+    return FallbackLib;
   }
 
   /** Map inputs to the library API */
@@ -428,19 +456,39 @@
     registerSlash();
   }
 
+  // Simple inlined settings renderer (single toggle)
+  function renderSettings(container){
+    const s = getSettings();
+    container.innerHTML = ''+
+      '<label class="st-flex st-gap-1 st-ai-center">' +
+      '  <input type="checkbox" id="fn_enable" />' +
+      '  <span>Enable Function Tool</span>' +
+      '</label>';
+    const cb = container.querySelector('#fn_enable');
+    cb.checked = !!s.enableFunctionTool;
+    cb.addEventListener('change', () => {
+      setSettings({ enableFunctionTool: cb.checked });
+      API.toast?.('Fantastical settings saved');
+      reRegister();
+    });
+  }
+
   // Register into the Extensions panel
   try {
-    API.registerExtension?.(EXT_ID, {
-      name: 'Fantastical Name Generator',
-      async init() { await init(); },
-      settings: {
-        get: getSettings,
-        set: setSettings,
-        // Some ST builds display a HTML settings page when provided
-        html: 'settings.html',
-      },
-      onSettingsChange() { reRegister(); },
-    }) || init();
+    if (API.registerExtension) {
+      API.registerExtension(EXT_ID, {
+        name: 'Fantastical Name Generator',
+        async init() { await init(); },
+        settings: {
+          get: getSettings,
+          set: setSettings,
+          render: renderSettings,
+        },
+        onSettingsChange() { reRegister(); },
+      });
+    } else {
+      init();
+    }
   } catch (err) {
     console.error('[Fantastical] Failed to register extension scaffold', err);
     // Fallback: just init
