@@ -1,0 +1,11 @@
+{
+  "name": "sillytavern-namegen-extension",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SillyTavern extension for generating names using fantastical",
+  "license": "MIT",
+  "scripts": {
+    "fetch:fantastical": "mkdir -p lib && npx --yes download-cli https://cdn.jsdelivr.net/npm/fantastical@2.0.1/dist/index.js lib/fantastical.js || curl -fsSL https://cdn.jsdelivr.net/npm/fantastical@2.0.1/dist/index.js -o lib/fantastical.js"
+  }
+}
+

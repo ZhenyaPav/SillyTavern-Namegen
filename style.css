@@ -1,2 +1,5 @@
-.fantastical-settings { padding: 8px; }
-.fantastical-settings .menu_button { padding: 6px 10px; }
+.namegen_settings .notes {
+  opacity: 0.8;
+  font-size: 12px;
+}
+

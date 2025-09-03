@@ -1,12 +1,13 @@
 {
-  "display_name": "SillyTavern Name Generator",
+  "display_name": "Name Generator",
   "loading_order": 5,
-  "dependencies": [],
+  "requires": [],
+  "optional": [],
   "js": "index.js",
   "css": "style.css",
   "author": "ZhenyaPav",
   "version": "1.0.0",
   "homePage": "https://github.com/ZhenyaPav/SillyTavern-Namegen",
-  "auto_update": true,
-  "minimum_client_version": "1.12.0"
+  "auto_update": true
 }
+

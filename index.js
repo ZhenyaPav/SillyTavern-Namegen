@@ -1,495 +1,237 @@
-/*
- * Fantastical Name Generator – Function Tool for SillyTavern
- * Uses the `fantastical` package. If unavailable locally, loads from CDN.
- */
+import { renderExtensionTemplateAsync } from '../../../extensions.js';
+import { SlashCommand } from '../../../slash-commands/SlashCommand.js';
+import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from '../../../slash-commands/SlashCommandArgument.js';
+import { commonEnumProviders } from '../../../slash-commands/SlashCommandCommonEnumsProvider.js';
+import { SlashCommandParser } from '../../../slash-commands/SlashCommandParser.js';
 
-(function () {
-  const EXT_ID = 'SillyTavern-Namegen';
-  // Backward/forward compatible bridge to ST APIs (global and ctx-based)
-  const API = {
-    ctx() {
-      try {
-        if (typeof SillyTavern !== 'undefined' && typeof SillyTavern.getContext === 'function') return SillyTavern.getContext();
-      } catch (_) {}
-      try {
-        if (typeof getContext === 'function') return getContext();
-      } catch (_) {}
-      return {};
-    },
-    registerExtension(id, obj) {
-      try { if (typeof window !== 'undefined' && typeof window.registerExtension === 'function') return window.registerExtension(id, obj); } catch (_) {}
-      const c = this.ctx();
-      return c.registerExtension?.(id, obj);
-    },
-    registerFunctionTool(def) {
-      try { if (typeof window !== 'undefined' && typeof window.registerFunctionTool === 'function') return window.registerFunctionTool(def); } catch (_) {}
-      const c = this.ctx();
-      return c.registerFunctionTool?.(def);
-    },
-    unregisterFunctionTool(name) {
-      try { if (typeof window !== 'undefined' && typeof window.unregisterFunctionTool === 'function') return window.unregisterFunctionTool(name); } catch (_) {}
-      const c = this.ctx();
-      return c.unregisterFunctionTool?.(name);
-    },
-    registerSlashCommand(...args) {
-      try { if (typeof window !== 'undefined' && typeof window.registerSlashCommand === 'function') return window.registerSlashCommand(...args); } catch (_) {}
-      const c = this.ctx();
-      return c.registerSlashCommand?.(...args);
-    },
-    unregisterSlashCommand(name) {
-      try { if (typeof window !== 'undefined' && typeof window.unregisterSlashCommand === 'function') return window.unregisterSlashCommand(name); } catch (_) {}
-      const c = this.ctx();
-      return c.unregisterSlashCommand?.(name);
-    },
-    isToolCallingSupported() {
-      try { if (typeof window !== 'undefined' && typeof window.isToolCallingSupported === 'function') return window.isToolCallingSupported(); } catch (_) {}
-      const c = this.ctx();
-      return c.isToolCallingSupported?.();
-    },
-    toast(msg) {
-      const c = this.ctx();
-      try { return c.toast?.(msg); } catch (_) {}
-      try { if (typeof window !== 'undefined' && window.toastr?.info) return window.toastr.info(msg); } catch (_) {}
-    },
-    extensionSettings(ns) {
-      const c = this.ctx();
-      if (!c.extensionSettings) c.extensionSettings = {};
-      if (!c.saveSettingsDebounced) c.saveSettingsDebounced = () => {};
-      return c.extensionSettings[ns] || {};
-    },
-    setExtensionSettings(ns, values) {
-      const c = this.ctx();
-      if (!c.extensionSettings) c.extensionSettings = {};
-      c.extensionSettings[ns] = values;
-      c.saveSettingsDebounced?.();
+export { MODULE_NAME };
+
+const MODULE_NAME = 'namegen';
+const TEMPLATE_PATH = 'third-party/SillyTavern-Namegen';
+
+const defaultSettings = Object.freeze({
+    functionTool: false,
+});
+
+function getSettings() {
+    const { extensionSettings } = SillyTavern.getContext();
+
+    if (!extensionSettings[MODULE_NAME]) {
+        extensionSettings[MODULE_NAME] = structuredClone(defaultSettings);
     }
-  };
-  const SETTINGS_KEY = 'fantastical_namegen';
-  const DEFAULTS = {
-    enableFunctionTool: true,
-    enableSlashCommand: true,
-    cdnUrl: 'https://cdn.jsdelivr.net/npm/fantastical@latest/dist/index.js',
-    preferCDN: true,
-    cacheModule: true,
-    showToasts: true,
-  };
 
-  /** Utility: read/write extension settings */
-  function getSettings() {
-    const store = API.extensionSettings(SETTINGS_KEY) || {};
-    return { ...DEFAULTS, ...store };
-  }
-  function setSettings(partial) {
-    const merged = { ...getSettings(), ...partial };
-    API.setExtensionSettings(SETTINGS_KEY, merged);
-  }
-
-  /** Simple args parser for the /name slash command */
-  function parseNameArgs(input) {
-    const out = { category: 'species', type: '', count: 1, gender: undefined, allowMultipleNames: false };
-    if (!input || !input.trim()) return out;
-
-    const tokens = input.match(/(?:[^\s"']+|\"[^\"]*\"|'[^']*')+/g)?.map(t => t.replace(/^['\"]|['\"]$/g, '')) || [];
-    const consume = () => tokens.shift();
-
-    // First, extract any --key or --key=value pairs
-    for (let i = 0; i < tokens.length; ) {
-      const t = tokens[i];
-      if (t?.startsWith('--')) {
-        const [k, vRaw] = t.slice(2).split('=');
-        let v = vRaw;
-        if (!v && (i + 1) < tokens.length && !tokens[i + 1].startsWith('--')) {
-          v = tokens[i + 1];
-          tokens.splice(i, 2);
-        } else {
-          tokens.splice(i, 1);
+    for (const key of Object.keys(defaultSettings)) {
+        if (!Object.hasOwn(extensionSettings[MODULE_NAME], key)) {
+            extensionSettings[MODULE_NAME][key] = defaultSettings[key];
         }
-        switch (k) {
-          case 'category':
-          case 'cat':
-            if (v) out.category = String(v); break;
-          case 'type':
-            if (v) out.type = String(v); break;
-          case 'count':
-          case 'n':
-            if (v) out.count = Math.max(1, Math.min(50, Number(v) || 1)); break;
-          case 'gender':
-            if (v) out.gender = String(v); break;
-          case 'allowMultipleNames':
-          case 'multi':
-            out.allowMultipleNames = v ? ['true', '1', 'yes', 'y'].includes(String(v).toLowerCase()) : true; break;
-        }
-        continue; // don't advance i (we already spliced)
-      }
-      i++;
     }
 
-    // Remaining positional tokens
-    const pos = tokens;
-    if (pos.length) {
-      // If first positional is one of known categories, treat as category
-      const maybeCat = String(pos[0]).toLowerCase();
-      if ([ 'species', 'parties', 'places', 'adventures' ].includes(maybeCat)) {
-        out.category = consume().toLowerCase();
-      }
-    }
-    if (pos.length) out.type = consume();
-    if (pos.length) {
-      const n = Number(pos[0]);
-      if (!Number.isNaN(n)) { out.count = Math.max(1, Math.min(50, n)); consume(); }
-    }
-    if (pos.length) {
-      // optional gender
-      out.gender = consume();
-    }
+    return extensionSettings[MODULE_NAME];
+}
 
-    return out;
-  }
-
-  // Coerce various ST slash-callback shapes to a plain string
-  function coerceArgsToString(raw) {
-    if (raw == null) return '';
-    if (typeof raw === 'string') return raw;
+async function ensureFantasticalLoaded() {
     try {
-      // Common patterns: { text: '...' } or { args: ['...'] }
-      if (typeof raw.text === 'string') return raw.text;
-      if (Array.isArray(raw.args)) return raw.args.join(' ');
-      if (Array.isArray(raw)) return raw.join(' ');
-      // Last resort: JSON
-      return '' + raw;
-    } catch (_) {
-      return '';
-    }
-  }
+        if (!SillyTavern.libs) SillyTavern.libs = {};
 
-  /** Register the /name slash command */
-  function registerSlash() {
-    const ctx = API.ctx();
-    const settings = getSettings();
-    if (!settings.enableSlashCommand) return;
-
-    const help = 'Generate fantasy names. Usage: /generateName [category] <type> [count] [gender] [--multi] or flags: --cat <category> --type <type> --count <n> --gender <g>';
-
-    const handler = async (raw) => {
-      try {
-        const argsStr = coerceArgsToString(raw);
-        const args = parseNameArgs(String(argsStr || ''));
-        if (!args.type) return 'Usage: ' + help;
-        const names = await generateNames(args);
-        return names.join('\n');
-      } catch (e) {
-        console.error('[Fantastical] /generateName failed', e);
-        return `Error: ${e?.message || e}`;
-      }
-    };
-
-    try {
-      // Legacy/global form: name, callback, aliases[], help, returnsResponse?, showInHelp?
-      if (typeof API.registerSlashCommand === 'function' || ctx.registerSlashCommand) {
-        API.registerSlashCommand('generateName', handler, ['fname'], help, true, true);
-        return;
-      }
-    } catch (e) {
-      console.warn('[Fantastical] registerSlashCommand failed', e);
-    }
-  }
-
-  /** Lightweight cache in the browser between sessions */
-  const ModuleCache = {
-    key: `${EXT_ID}:fantastical-src`,
-    async get() {
-      try { return (await localStorage.getItem(this.key)) || null; } catch (e) { return null; }
-    },
-    async set(code) {
-      try { localStorage.setItem(this.key, code); } catch (e) {}
-    },
-    async clear() { try { localStorage.removeItem(this.key); } catch (e) {} },
-  };
-
-  /**
-   * Dynamically import the `fantastical` library.
-   * Strategy:
-   * 1) If already loaded -> return.
-   * 2) If cached JS string exists and caching enabled -> import from a Blob URL.
-   * 3) Try local relative import (for cases when user `npm i fantastical` inside extension dir and the bundler exposes dist/index.js).
-   * 4) Fallback to CDN (jsDelivr). Optionally cache the fetched code.
-   */
-  async function loadFantastical() {
-    if (globalThis.__fantasticalLib) return globalThis.__fantasticalLib;
-
-    const { preferCDN, cdnUrl, cacheModule } = getSettings();
-
-    async function importFromUrl(url) {
-      const resp = await fetch(url, { cache: 'force-cache' });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const code = await resp.text();
-      const blobUrl = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
-      try {
-        const mod = await import(/* webpackIgnore: true */ blobUrl);
-        return mod;
-      } finally {
-        URL.revokeObjectURL(blobUrl);
-      }
-    }
-
-    // 1) Load from cache (if any and CDN not preferred)
-    if (!preferCDN && cacheModule) {
-      const cached = await ModuleCache.get();
-      if (cached) {
-        try {
-          const url = URL.createObjectURL(new Blob([cached], { type: 'text/javascript' }));
-          const mod = await import(/* webpackIgnore: true */ url);
-          URL.revokeObjectURL(url);
-          if (mod && Object.keys(mod).length) {
-            globalThis.__fantasticalLib = mod;
-            return mod;
-          }
-        } catch (err) {
-          console.warn('[Fantastical] Failed to import from cache', err);
+        if (SillyTavern.libs.fantastical && typeof SillyTavern.libs.fantastical === 'object') {
+            return SillyTavern.libs.fantastical;
         }
-      }
-    }
 
-    async function tryLocalFirst() {
-      const localCandidates = [
-        './node_modules/fantastical/dist/index.js',
-        './dist/index.js',
-      ];
-      for (const rel of localCandidates) {
-        try {
-          const mod = await importFromUrl(rel);
-          if (mod && Object.keys(mod).length) return mod;
-        } catch (_) { /* try next */ }
-      }
-      return null;
-    }
+        const loadScript = (src) => new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = src;
+            script.async = true;
+            script.onload = () => resolve();
+            script.onerror = () => reject(new Error('Failed to load ' + src));
+            document.head.appendChild(script);
+        });
 
-    async function tryCDNFirst() {
-      try {
-        const mod = await importFromUrl(cdnUrl);
-        // Cache the fetched code if desired
-        if (cacheModule) {
-          try {
-            const resp = await fetch(cdnUrl, { cache: 'force-cache' });
-            if (resp.ok) {
-              const code = await resp.text();
-              await ModuleCache.set(code);
+        const localUrl = `/${TEMPLATE_PATH}/lib/fantastical.js`;
+        const cdnUrls = [
+            'https://cdn.jsdelivr.net/npm/fantastical@2.0.1/dist/index.js',
+            'https://unpkg.com/fantastical@2.0.1/dist/index.js',
+        ];
+
+        const tryUrls = [localUrl, ...cdnUrls];
+        let lastError;
+        for (const url of tryUrls) {
+            try {
+                await loadScript(url);
+                break;
+            } catch (err) {
+                lastError = err;
             }
-          } catch (_) {}
         }
-        return mod;
-      } catch (err) {
-        console.warn('[Fantastical] CDN load failed, trying local', err);
-        return await tryLocalFirst();
-      }
+
+        const lib = window.fantastical || (window.exports && window.exports.fantastical) || undefined;
+        if (!lib) {
+            if (lastError) throw lastError;
+            throw new Error('Fantastical not found after loading attempts');
+        }
+
+        SillyTavern.libs.fantastical = lib;
+        return lib;
+    } catch (error) {
+        console.error('NameGen: Failed to load fantastical', error);
+        toastr.error('NameGen: Could not load fantastical library');
+        throw error;
     }
+}
 
-    try {
-      const mod = preferCDN ? (await tryCDNFirst()) : (await tryLocalFirst()) || (await tryCDNFirst());
-      if (mod && Object.keys(mod).length) {
-        globalThis.__fantasticalLib = mod;
-        return mod;
-      }
-    } catch (err) {
-      console.warn('[Fantastical] Failed to load fantastical module, using built-in fallback', err);
-    }
-
-    // Built-in minimal fallback so the tool still works without external module
-    const FallbackLib = (function(){
-      function pick(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
-      const first = ['Ael','Bel','Cal','Del','El','Fen','Gal','Hal','Ith','Jun','Kor','Lor','Mar','Nor','Ori','Pav','Quin','Rin','Sor','Tor','Ulf','Val','Wyn','Xan','Yor','Zan'];
-      const last = ['bane','brook','crest','dusk','ember','forge','glen','hall','iron','jewel','kestrel','leaf','moon','night','oak','peak','quill','river','stone','thorn','vale','wind','yarrow','zephyr'];
-      const humanFirstMale = ['Arth','Bram','Ced','Dain','Edr','Falk','Garr','Hugh','Ivor','Jorr','Kael','Leof','Merr','Nev','Osric','Perr','Quent','Rolf','Sieg','Tris','Ulric','Varr','Warr','Xav','Yorr','Zed'];
-      const humanFirstFemale = ['Aria','Bryn','Celia','Dara','Elin','Faye','Gwen','Hana','Isla','Jora','Kara','Lina','Mira','Nora','Orla','Pia','Quin','Rhea','Sara','Tara','Una','Vera','Wyn','Xena','Yara','Zara'];
-      function human(opts={}){
-        const g = String(opts.gender||'').toLowerCase();
-        const f = g==='female'? pick(humanFirstFemale) : g==='male'? pick(humanFirstMale) : pick(humanFirstMale.concat(humanFirstFemale));
-        const l = pick(last);
-        return `${f} ${l}`;
-      }
-      function elf(){ return `${pick(['Ae','Eli','Iri','Olo','Uli'])}${pick(first)}${pick(['riel','thir','lith','veth','wen'])}`; }
-      function dwarf(){ return `${pick(['Bal','Dor','Far','Gim','Thra'])}${pick(['in','or','im','ar','um'])} ${pick(['Stonebeard','Ironfist','Deepdelver','Boulderhelm','Rockbiter'])}`; }
-      function goblin(){ return `${pick(['Sn','Gr','Kr','Tr','Br'])}${pick(['ik','og','ak','uk','ok'])}`; }
-      function guild(){ return `${pick(['Silver','Shadow','Golden','Crimson','Azure'])} ${pick(['Blades','Circle','Guild','Order','Syndicate'])}`; }
-      function tavern(){ return `The ${pick(['Prancing','Sleeping','Roaring','Dancing','Tipsy'])} ${pick(['Pony','Dragon','Lion','Wyvern','Goblin'])}`; }
-      function adventure(){ return `${pick(['Quest of the','Siege of the','Whispers of the','Shadows of the','Crown of the'])} ${pick(['Fallen King','Lost City','Eternal Night','Hidden Vale','Broken Blade'])}`; }
-      return {
-        species: { human, elf, dwarf, goblin },
-        parties: { guild },
-        places: { tavern },
-        adventures: { adventure },
-      };
-    })();
-
-    globalThis.__fantasticalLib = FallbackLib;
-    return FallbackLib;
-  }
-
-  /** Map inputs to the library API */
-  function resolveGenerator(lib, category, type) {
-    // Allow both grouped and top-level exports
-    const groups = {
-      species: lib.species || {},
-      parties: lib.parties || {},
-      places: lib.places || {},
-      adventures: lib.adventures || {},
+function resolveGenerator(kind) {
+    // Normalize and provide a few friendly aliases
+    if (!kind) return 'human';
+    const map = {
+        place: 'tavern',
+        places: 'tavern',
+        party: 'guild',
+        parties: 'guild',
+        adventure: 'adventure',
+        adventures: 'adventure',
+        hielf: 'highelf',
+        high_elf: 'highelf',
+        wood_elf: 'woodelf',
+        dark_elf: 'darkelf',
+        half_elf: 'halfelf',
+        high_fairy: 'highfairy',
+        cave_person: 'cavePerson',
     };
 
-    // Prefer grouped; otherwise try top-level function by name
-    let fn = groups[category]?.[type];
-    if (!fn && typeof lib[type] === 'function') fn = lib[type];
+    const k = String(kind).trim();
+    const normalized = k.replace(/\s+/g, '').toLowerCase();
+
+    for (const [key, val] of Object.entries(map)) {
+        if (normalized === key.replace(/\s+/g, '').toLowerCase()) return val;
+    }
+    return k; // try raw provided name
+}
+
+async function generateName(kind, gender) {
+    const api = await ensureFantasticalLoaded();
+
+    const resolved = resolveGenerator(kind);
+    let fn = api[resolved];
 
     if (typeof fn !== 'function') {
-      throw new Error(`Unknown generator: ${category}.${type}`);
+        toastr.warning(`NameGen: Unknown generator "${resolved}"; defaulting to human`);
+        fn = api.human;
     }
 
-    return fn;
-  }
+    // Many species accept an optional gender; if provided use it, else default to 'male'
+    const gen = String(gender || '').toLowerCase();
+    const genderArg = gen === 'female' ? 'female' : gen === 'male' ? 'male' : 'male';
 
-  async function generateNames({ category, type, gender = null, allowMultipleNames = false, count = 1 }) {
-    const lib = await loadFantastical();
-    const fn = resolveGenerator(lib, category, type);
-
-    const results = [];
-    for (let i = 0; i < Math.max(1, Math.min(50, Number(count) || 1)); i++) {
-      let name;
-      if (category === 'species') {
-        // species may accept options incl. gender and allowMultipleNames
-        const opts = {};
-        if (gender != null && String(gender).length) opts.gender = gender;
-        if (typeof allowMultipleNames === 'boolean') opts.allowMultipleNames = allowMultipleNames;
-        name = fn(opts);
-      } else {
-        // parties/places/adventures typically accept no options
-        name = fn();
-      }
-      results.push(String(name));
+    // Heuristic: If function expects any args, pass gender
+    try {
+        const name = fn.length > 0 ? fn(genderArg) : fn();
+        return String(name || '').trim();
+    } catch (error) {
+        console.error('NameGen: error generating name', error);
+        toastr.error('NameGen: Error generating name');
+        return '';
     }
+}
 
-    return results;
-  }
+async function addSettingsPanel() {
+    const settingsHtml = await renderExtensionTemplateAsync(TEMPLATE_PATH, 'settings');
+    const getSettingsContainer = () => $(document.getElementById('namegen_container') ?? document.getElementById('extensions_settings2'));
+    getSettingsContainer().append(settingsHtml);
 
-  /** Register the Function Tool */
-  function registerTool() {
-    const ctx = API.ctx();
     const settings = getSettings();
-
-    const supported = API.isToolCallingSupported?.();
-    if (supported === false) {
-      console.warn('[Fantastical] Tool calling not supported or disabled.');
-      return;
-    }
-
-    if (!settings.enableFunctionTool) return;
-
-    API.registerFunctionTool({
-      name: 'fantasyName.generate',
-      displayName: 'Generate Fantasy Name(s)',
-      description: 'Generate fantasy names (species, parties, places, adventures) using the fantastical library. Use when the user asks for a fantasy name.',
-      parameters: {
-        $schema: 'http://json-schema.org/draft-04/schema#',
-        type: 'object',
-        properties: {
-          category: {
-            type: 'string',
-            description: 'Generator category: species, parties, places, adventures',
-            enum: ['species', 'parties', 'places', 'adventures'],
-          },
-          type: {
-            type: 'string',
-            description: 'Specific generator name within the category (e.g., human, elf, dwarf, goblin, mysticOrder, guild, tavern, adventure).',
-          },
-          gender: {
-            type: 'string',
-            description: "Optional gender for species that support it: 'male', 'female', or leave blank.",
-          },
-          allowMultipleNames: {
-            type: 'boolean',
-            description: 'For species.human: allow multiple-part names when true.',
-            default: false,
-          },
-          count: {
-            type: 'integer',
-            description: 'How many names to generate (1–50).',
-            minimum: 1,
-            maximum: 50,
-            default: 1,
-          }
-        },
-        required: ['category', 'type']
-      },
-      action: async (args) => {
-        const { showToasts } = getSettings();
-        try {
-          const names = await generateNames(args);
-          if (showToasts) API.toast('Generated fantasy name(s)');
-          // Return as newline-joined string so it is readable in chat
-          return names.join('\n');
-        } catch (err) {
-          console.error('[Fantastical] Generation failed', err);
-          return `Error: ${err.message || err}`;
-        }
-      },
-      formatMessage: ({ category, type, count = 1 }) => {
-        const { showToasts } = getSettings();
-        if (!showToasts) return '';
-        return `Generating ${count} ${category}.${type} name(s)…`;
-      },
-      stealth: false,
+    $('#namegen_function_tool').prop('checked', settings.functionTool).on('change', function () {
+        settings.functionTool = !!$(this).prop('checked');
+        SillyTavern.getContext().saveSettingsDebounced();
+        registerFunctionTools();
     });
-  }
+}
 
-  /** UI hook for settings panel to refresh registration on toggle */
-  function reRegister() {
-    // Unregister by name then re-register
-    try { API.unregisterFunctionTool?.('fantasyName.generate'); } catch (_) {}
-    try { API.unregisterSlashCommand?.('generateName'); } catch (_) {}
-    registerTool();
-    registerSlash();
-  }
-
-  /** Wire up when extensions are ready */
-  async function init() {
-    // Expose small API for debugging in console
-    globalThis.FantasticalNameGen = { loadFantastical, generateNames, reRegister, getSettings, setSettings };
-    registerTool();
-    registerSlash();
-  }
-
-  // Register into the Extensions panel (Dice-style): use window.registerExtension or wait for event
-  function registerExtensionNow(){
-    const descriptor = {
-      name: 'Fantastical Name Generator',
-      async init() { await init(); },
-      settings: {
-        get: getSettings,
-        set: setSettings,
-        // Use external html file like Dice extension
-        html: 'settings.html',
-      },
-      onSettingsChange() { reRegister(); },
-    };
-
+function registerFunctionTools() {
     try {
-      if (typeof window !== 'undefined' && typeof window.registerExtension === 'function') {
-        window.registerExtension(EXT_ID, descriptor);
-        return true;
-      }
-    } catch (_) {}
-    try {
-      const ctx = API.ctx();
-      if (typeof ctx.registerExtension === 'function') {
-        ctx.registerExtension(EXT_ID, descriptor);
-        return true;
-      }
-    } catch (_) {}
-    return false;
-  }
+        const { registerFunctionTool, unregisterFunctionTool } = SillyTavern.getContext();
+        if (!registerFunctionTool || !unregisterFunctionTool) {
+            console.debug('NameGen: function tools are not supported');
+            return;
+        }
 
-  if (!registerExtensionNow()) {
-    // Wait for core to signal ready (mirror Dice extension approach)
-    const handler = () => { registerExtensionNow(); };
-    try { window.addEventListener('registerExtensions', handler, { once: true }); } catch (_) {}
-    try { document.addEventListener('registerExtensions', handler, { once: true }); } catch (_) {}
-  }
-})();
+        unregisterFunctionTool('GenerateName');
+
+        const settings = getSettings();
+        if (!settings.functionTool) {
+            return;
+        }
+
+        const schema = Object.freeze({
+            $schema: 'http://json-schema.org/draft-04/schema#',
+            type: 'object',
+            properties: {
+                kind: {
+                    type: 'string',
+                    description: 'The generator to use, e.g. human, elf, dwarf, tavern, guild, adventure',
+                },
+                gender: {
+                    type: 'string',
+                    description: 'Gender for species that support it',
+                    enum: ['male', 'female'],
+                },
+            },
+        });
+
+        registerFunctionTool({
+            name: 'GenerateName',
+            displayName: 'Name Generator',
+            description: 'Generates a fantasy-style name using the fantastical library.',
+            parameters: schema,
+            action: async (args) => {
+                const kind = args?.kind || 'human';
+                const gender = args?.gender || 'male';
+                const name = await generateName(kind, gender);
+                return name || 'Unknown';
+            },
+            formatMessage: () => '',
+        });
+    } catch (error) {
+        console.error('NameGen: Error registering function tools', error);
+    }
+}
+
+jQuery(async function () {
+    await addSettingsPanel();
+    registerFunctionTools();
+
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'generateName',
+        aliases: ['genname', 'name'],
+        callback: async (args, value) => {
+            const kind = String(value || args.kind || 'human');
+            const gender = String(args.gender || 'male');
+            const result = await generateName(kind, gender);
+            return result;
+        },
+        helpString: 'Generate a fantasy name (e.g., /generateName elf --gender female).',
+        returns: 'generated name',
+        namedArgumentList: [
+            SlashCommandNamedArgument.fromProps({
+                name: 'gender',
+                description: 'Gender for gendered species',
+                isRequired: false,
+                typeList: [ARGUMENT_TYPE.STRING],
+                defaultValue: 'male',
+                enumProvider: commonEnumProviders.string(['male', 'female']),
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'kind',
+                description: 'Generator kind, e.g. human, elf, dwarf, tavern, guild, adventure',
+                isRequired: false,
+                typeList: [ARGUMENT_TYPE.STRING],
+            }),
+        ],
+        unnamedArgumentList: [
+            SlashCommandArgument.fromProps({
+                description: 'Kind (fallback if not provided via --kind)',
+                isRequired: false,
+                typeList: [ARGUMENT_TYPE.STRING],
+            }),
+        ],
+    }));
+});
+

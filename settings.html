@@ -1,33 +1,23 @@
-<div class="fantastical-settings">
-  <h3>Fantastical Name Generator</h3>
-  <label class="st-flex st-gap-1 st-ai-center">
-    <input type="checkbox" id="fn_enable" />
-    <span>Enable Function Tool</span>
-  </label>
-
-  <script>
-    (function(){
-      function getCtx(){
-        try { if (typeof SillyTavern !== 'undefined' && typeof SillyTavern.getContext === 'function') return SillyTavern.getContext(); } catch(_){}
-        try { if (typeof getContext === 'function') return getContext(); } catch(_){}
-        return {};
-      }
-      const key = 'fantastical_namegen';
-      function get(){ const ctx = getCtx(); return (ctx.extensionSettings?.[key]) || {}; }
-      function set(values){ const ctx = getCtx(); if(!ctx.extensionSettings) ctx.extensionSettings = {}; ctx.extensionSettings[key] = { ...(get()), ...values }; ctx.saveSettingsDebounced?.(); }
-
-      function refresh(){
-        const s = Object.assign({ enableFunctionTool: true }, get());
-        document.getElementById('fn_enable').checked = !!s.enableFunctionTool;
-      }
-
-      document.getElementById('fn_enable').addEventListener('change', (e) => {
-        set({ enableFunctionTool: !!e.target.checked });
-        globalThis.FantasticalNameGen?.reRegister?.();
-        getCtx().toast?.('Fantastical settings saved');
-      });
-
-      refresh();
-    })();
-  </script>
+<div class="namegen_settings">
+    <div class="inline-drawer">
+        <div class="inline-drawer-toggle inline-drawer-header">
+            <b>Name Generator</b>
+            <div class="inline-drawer-icon fa-solid interactable up fa-circle-chevron-up" tabindex="0"></div>
+        </div>
+        <div class="inline-drawer-content">
+            <div class="marginBot5">
+                <label class="checkbox_label" for="namegen_function_tool">
+                    <input id="namegen_function_tool" type="checkbox">
+                    <span>Use function tool</span>
+                    <a rel="noopener" href="https://docs.sillytavern.app/for-contributors/function-calling/" class="notes-link" target="_blank">
+                        <span class="note-link-span">?</span>
+                    </a>
+                </label>
+            </div>
+        </div>
+    </div>
+    <div class="notes">Use /generateName to test name generation.</div>
+    <div class="notes">If the local library is missing, the extension auto-loads fantastical from a CDN.</div>
+    <div class="notes">Supported kinds include: human, elf, dwarf, goblin, orc, ogre, halfling, gnome, fairy, highelf, woodelf, darkelf, halfelf, tavern, guild, mysticOrder, militaryUnit, adventure.</div>
 </div>
+
