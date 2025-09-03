@@ -146,6 +146,22 @@
     return out;
   }
 
+  // Coerce various ST slash-callback shapes to a plain string
+  function coerceArgsToString(raw) {
+    if (raw == null) return '';
+    if (typeof raw === 'string') return raw;
+    try {
+      // Common patterns: { text: '...' } or { args: ['...'] }
+      if (typeof raw.text === 'string') return raw.text;
+      if (Array.isArray(raw.args)) return raw.args.join(' ');
+      if (Array.isArray(raw)) return raw.join(' ');
+      // Last resort: JSON
+      return '' + raw;
+    } catch (_) {
+      return '';
+    }
+  }
+
   /** Register the /name slash command */
   function registerSlash() {
     const ctx = API.ctx();
@@ -154,14 +170,15 @@
 
     const help = 'Generate fantasy names. Usage: /generateName [category] <type> [count] [gender] [--multi] or flags: --cat <category> --type <type> --count <n> --gender <g>';
 
-    const handler = async (argsStr = '') => {
+    const handler = async (raw) => {
       try {
+        const argsStr = coerceArgsToString(raw);
         const args = parseNameArgs(String(argsStr || ''));
         if (!args.type) return 'Usage: ' + help;
         const names = await generateNames(args);
         return names.join('\n');
       } catch (e) {
-        console.error('[Fantastical] /name failed', e);
+        console.error('[Fantastical] /generateName failed', e);
         return `Error: ${e?.message || e}`;
       }
     };
@@ -202,7 +219,20 @@
 
     const { preferCDN, cdnUrl, cacheModule } = getSettings();
 
-    // 2) Load from cache (if any)
+    async function importFromUrl(url) {
+      const resp = await fetch(url, { cache: 'force-cache' });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const code = await resp.text();
+      const blobUrl = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
+      try {
+        const mod = await import(/* webpackIgnore: true */ blobUrl);
+        return mod;
+      } finally {
+        URL.revokeObjectURL(blobUrl);
+      }
+    }
+
+    // 1) Load from cache (if any and CDN not preferred)
     if (!preferCDN && cacheModule) {
       const cached = await ModuleCache.get();
       if (cached) {
@@ -220,40 +250,51 @@
       }
     }
 
-    // 3) Try a local relative import (works if user placed the built file manually)
-    try {
+    async function tryLocalFirst() {
       const localCandidates = [
         './node_modules/fantastical/dist/index.js',
         './dist/index.js',
       ];
       for (const rel of localCandidates) {
         try {
-          const mod = await import(/* webpackIgnore: true */ rel);
-          if (mod && Object.keys(mod).length) {
-            globalThis.__fantasticalLib = mod;
-            return mod;
-          }
+          const mod = await importFromUrl(rel);
+          if (mod && Object.keys(mod).length) return mod;
         } catch (_) { /* try next */ }
       }
-    } catch (_) { /* ignore */ }
-
-    // 4) CDN fallback
-    try {
-      const url = cdnUrl;
-      // Fetch once (so we can optionally cache) and eval via Blob
-      const resp = await fetch(url, { cache: 'force-cache' });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const code = await resp.text();
-      if (cacheModule) await ModuleCache.set(code);
-      const blobUrl = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
-      const mod = await import(/* webpackIgnore: true */ blobUrl);
-      URL.revokeObjectURL(blobUrl);
-      globalThis.__fantasticalLib = mod;
-      return mod;
-    } catch (err) {
-      console.error('[Fantastical] Failed to load module from CDN:', err);
-      throw new Error('Fantastical module could not be loaded. Check your connection or CDN URL in settings.');
+      return null;
     }
+
+    async function tryCDNFirst() {
+      try {
+        const mod = await importFromUrl(cdnUrl);
+        // Cache the fetched code if desired
+        if (cacheModule) {
+          try {
+            const resp = await fetch(cdnUrl, { cache: 'force-cache' });
+            if (resp.ok) {
+              const code = await resp.text();
+              await ModuleCache.set(code);
+            }
+          } catch (_) {}
+        }
+        return mod;
+      } catch (err) {
+        console.warn('[Fantastical] CDN load failed, trying local', err);
+        return await tryLocalFirst();
+      }
+    }
+
+    try {
+      const mod = preferCDN ? (await tryCDNFirst()) : (await tryLocalFirst()) || (await tryCDNFirst());
+      if (mod && Object.keys(mod).length) {
+        globalThis.__fantasticalLib = mod;
+        return mod;
+      }
+    } catch (err) {
+      console.error('[Fantastical] Failed to load fantastical module', err);
+      throw err;
+    }
+    throw new Error('Fantastical module could not be loaded from local or CDN.');
   }
 
   /** Map inputs to the library API */
