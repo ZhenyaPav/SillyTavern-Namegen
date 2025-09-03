@@ -167,25 +167,13 @@
     };
 
     try {
-      // Form 1: name, handler, options
+      // Legacy/global form: name, callback, aliases[], help, returnsResponse?, showInHelp?
       if (typeof API.registerSlashCommand === 'function' || ctx.registerSlashCommand) {
-        API.registerSlashCommand('generateName', handler, { help, aliases: ['fname'] });
+        API.registerSlashCommand('generateName', handler, ['fname'], help, true, true);
         return;
       }
     } catch (e) {
-      console.warn('[Fantastical] registerSlashCommand(name, fn, opts) failed; trying object form', e);
-    }
-
-    try {
-      // Form 2: object descriptor
-      API.registerSlashCommand?.({
-        name: 'generateName',
-        aliases: ['fname'],
-        description: help,
-        callback: handler,
-      });
-    } catch (e) {
-      console.warn('[Fantastical] registerSlashCommand object form failed', e);
+      console.warn('[Fantastical] registerSlashCommand failed', e);
     }
   }
 
