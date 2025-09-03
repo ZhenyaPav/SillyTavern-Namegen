@@ -15,10 +15,24 @@ Adds a **Function Tool** called `fantasyName.generate` that uses the [`fantastic
 
 ## Settings
 - **Use Function Tool** – toggles registration.
+- **Enable /name command** – toggles the slash command.
 - **Prefer CDN** – load from CDN first if local import fails.
 - **CDN URL** – override if you need to pin a version (e.g. `https://cdn.jsdelivr.net/npm/fantastical@1.0.5/dist/index.js`).
 - **Cache library** – store fetched JS in browser storage and import from there next time.
 - **Show toasts** – UI notifications on tool calls.
+
+## Slash Command
+Type `/name` in the chat input to generate names without tool-calling.
+
+Usage
+- `/name [category] <type> [count] [gender] [--multi]`
+- Flags: `--cat <category> --type <type> --count <n> --gender <g> --multi`
+
+Examples
+- `/name elf 5 female` → 5 female elf names (category defaults to `species`)
+- `/name species dwarf 3` → 3 dwarf names
+- `/name places tavern 2` → 2 tavern names
+- `/name --cat parties --type guild --count 3` → 3 guild names
 
 ## Function Tool
 **Name:** `fantasyName.generate`

@@ -8,6 +8,7 @@
   const SETTINGS_KEY = 'fantastical_namegen';
   const DEFAULTS = {
     enableFunctionTool: true,
+    enableSlashCommand: true,
     cdnUrl: 'https://cdn.jsdelivr.net/npm/fantastical@latest/dist/index.js',
     preferCDN: true,
     cacheModule: true,
@@ -25,6 +26,111 @@
     const merged = { ...getSettings(), ...partial };
     ctx.extensionSettings[SETTINGS_KEY] = merged;
     ctx.saveSettingsDebounced?.();
+  }
+
+  /** Simple args parser for the /name slash command */
+  function parseNameArgs(input) {
+    const out = { category: 'species', type: '', count: 1, gender: undefined, allowMultipleNames: false };
+    if (!input || !input.trim()) return out;
+
+    const tokens = input.match(/(?:[^\s"']+|\"[^\"]*\"|'[^']*')+/g)?.map(t => t.replace(/^['\"]|['\"]$/g, '')) || [];
+    const consume = () => tokens.shift();
+
+    // First, extract any --key or --key=value pairs
+    for (let i = 0; i < tokens.length; ) {
+      const t = tokens[i];
+      if (t?.startsWith('--')) {
+        const [k, vRaw] = t.slice(2).split('=');
+        let v = vRaw;
+        if (!v && (i + 1) < tokens.length && !tokens[i + 1].startsWith('--')) {
+          v = tokens[i + 1];
+          tokens.splice(i, 2);
+        } else {
+          tokens.splice(i, 1);
+        }
+        switch (k) {
+          case 'category':
+          case 'cat':
+            if (v) out.category = String(v); break;
+          case 'type':
+            if (v) out.type = String(v); break;
+          case 'count':
+          case 'n':
+            if (v) out.count = Math.max(1, Math.min(50, Number(v) || 1)); break;
+          case 'gender':
+            if (v) out.gender = String(v); break;
+          case 'allowMultipleNames':
+          case 'multi':
+            out.allowMultipleNames = v ? ['true', '1', 'yes', 'y'].includes(String(v).toLowerCase()) : true; break;
+        }
+        continue; // don't advance i (we already spliced)
+      }
+      i++;
+    }
+
+    // Remaining positional tokens
+    const pos = tokens;
+    if (pos.length) {
+      // If first positional is one of known categories, treat as category
+      const maybeCat = String(pos[0]).toLowerCase();
+      if ([ 'species', 'parties', 'places', 'adventures' ].includes(maybeCat)) {
+        out.category = consume().toLowerCase();
+      }
+    }
+    if (pos.length) out.type = consume();
+    if (pos.length) {
+      const n = Number(pos[0]);
+      if (!Number.isNaN(n)) { out.count = Math.max(1, Math.min(50, n)); consume(); }
+    }
+    if (pos.length) {
+      // optional gender
+      out.gender = consume();
+    }
+
+    return out;
+  }
+
+  /** Register the /name slash command */
+  function registerSlash() {
+    const ctx = SillyTavern.getContext();
+    const settings = getSettings();
+    if (!settings.enableSlashCommand) return;
+
+    const help = 'Generate fantasy names. Usage: /name [category] <type> [count] [gender] [--multi] or flags: --cat <category> --type <type> --count <n> --gender <g>';
+
+    const handler = async (argsStr = '') => {
+      try {
+        const args = parseNameArgs(String(argsStr || ''));
+        if (!args.type) return 'Usage: ' + help;
+        const names = await generateNames(args);
+        return names.join('\n');
+      } catch (e) {
+        console.error('[Fantastical] /name failed', e);
+        return `Error: ${e?.message || e}`;
+      }
+    };
+
+    try {
+      // Form 1: name, handler, options
+      if (typeof ctx.registerSlashCommand === 'function') {
+        ctx.registerSlashCommand('name', handler, { help, aliases: ['fname'] });
+        return;
+      }
+    } catch (e) {
+      console.warn('[Fantastical] registerSlashCommand(name, fn, opts) failed; trying object form', e);
+    }
+
+    try {
+      // Form 2: object descriptor
+      ctx.registerSlashCommand?.({
+        name: 'name',
+        aliases: ['fname'],
+        description: help,
+        callback: handler,
+      });
+    } catch (e) {
+      console.warn('[Fantastical] registerSlashCommand object form failed', e);
+    }
   }
 
   /** Lightweight cache in the browser between sessions */
@@ -223,7 +329,9 @@
   function reRegister() {
     // Unregister by name then re-register
     try { SillyTavern.getContext().unregisterFunctionTool?.('fantasyName.generate'); } catch (_) {}
+    try { SillyTavern.getContext().unregisterSlashCommand?.('name'); } catch (_) {}
     registerTool();
+    registerSlash();
   }
 
   /** Wire up when extensions are ready */
@@ -231,6 +339,7 @@
     // Expose small API for debugging in console
     globalThis.FantasticalNameGen = { loadFantastical, generateNames, reRegister, getSettings, setSettings };
     registerTool();
+    registerSlash();
   }
 
   // Register into the Extensions panel

@@ -6,6 +6,11 @@
   </label>
 
   <label class="st-flex st-gap-1 st-ai-center">
+    <input type="checkbox" id="fn_slash" />
+    <span>Enable /name slash command</span>
+  </label>
+
+  <label class="st-flex st-gap-1 st-ai-center">
     <input type="checkbox" id="fn_prefer_cdn" />
     <span>Prefer CDN auto-install (no local npm)</span>
   </label>
@@ -40,9 +45,10 @@
 
       function refresh(){
         const s = Object.assign({
-          enableFunctionTool: true, preferCDN: true, cdnUrl: 'https://cdn.jsdelivr.net/npm/fantastical@latest/dist/index.js', cacheModule: true, showToasts: true,
+          enableFunctionTool: true, enableSlashCommand: true, preferCDN: true, cdnUrl: 'https://cdn.jsdelivr.net/npm/fantastical@latest/dist/index.js', cacheModule: true, showToasts: true,
         }, get());
         document.getElementById('fn_enable').checked = !!s.enableFunctionTool;
+        document.getElementById('fn_slash').checked = !!s.enableSlashCommand;
         document.getElementById('fn_prefer_cdn').checked = !!s.preferCDN;
         document.getElementById('fn_cdn_url').value = s.cdnUrl || '';
         document.getElementById('fn_cache').checked = !!s.cacheModule;
@@ -52,6 +58,7 @@
       document.getElementById('fn_save').addEventListener('click', () => {
         set({
           enableFunctionTool: document.getElementById('fn_enable').checked,
+          enableSlashCommand: document.getElementById('fn_slash').checked,
           preferCDN: document.getElementById('fn_prefer_cdn').checked,
           cdnUrl: document.getElementById('fn_cdn_url').value,
           cacheModule: document.getElementById('fn_cache').checked,
@@ -63,7 +70,7 @@
       });
 
       document.getElementById('fn_clear_cache').addEventListener('click', async () => {
-        try { await localStorage.removeItem('third-party/Extension-FantasticalNameGen:fantastical-src'); } catch (e) {}
+        try { await localStorage.removeItem('ZhenyaPav/SillyTavern-Namegen:fantastical-src'); } catch (e) {}
         ctx.toast?.('Fantastical cache cleared');
       });
 
