@@ -456,42 +456,40 @@
     registerSlash();
   }
 
-  // Simple inlined settings renderer (single toggle)
-  function renderSettings(container){
-    const s = getSettings();
-    container.innerHTML = ''+
-      '<label class="st-flex st-gap-1 st-ai-center">' +
-      '  <input type="checkbox" id="fn_enable" />' +
-      '  <span>Enable Function Tool</span>' +
-      '</label>';
-    const cb = container.querySelector('#fn_enable');
-    cb.checked = !!s.enableFunctionTool;
-    cb.addEventListener('change', () => {
-      setSettings({ enableFunctionTool: cb.checked });
-      API.toast?.('Fantastical settings saved');
-      reRegister();
-    });
+  // Register into the Extensions panel (Dice-style): use window.registerExtension or wait for event
+  function registerExtensionNow(){
+    const descriptor = {
+      name: 'Fantastical Name Generator',
+      async init() { await init(); },
+      settings: {
+        get: getSettings,
+        set: setSettings,
+        // Use external html file like Dice extension
+        html: 'settings.html',
+      },
+      onSettingsChange() { reRegister(); },
+    };
+
+    try {
+      if (typeof window !== 'undefined' && typeof window.registerExtension === 'function') {
+        window.registerExtension(EXT_ID, descriptor);
+        return true;
+      }
+    } catch (_) {}
+    try {
+      const ctx = API.ctx();
+      if (typeof ctx.registerExtension === 'function') {
+        ctx.registerExtension(EXT_ID, descriptor);
+        return true;
+      }
+    } catch (_) {}
+    return false;
   }
 
-  // Register into the Extensions panel
-  try {
-    if (API.registerExtension) {
-      API.registerExtension(EXT_ID, {
-        name: 'Fantastical Name Generator',
-        async init() { await init(); },
-        settings: {
-          get: getSettings,
-          set: setSettings,
-          render: renderSettings,
-        },
-        onSettingsChange() { reRegister(); },
-      });
-    } else {
-      init();
-    }
-  } catch (err) {
-    console.error('[Fantastical] Failed to register extension scaffold', err);
-    // Fallback: just init
-    init();
+  if (!registerExtensionNow()) {
+    // Wait for core to signal ready (mirror Dice extension approach)
+    const handler = () => { registerExtensionNow(); };
+    try { window.addEventListener('registerExtensions', handler, { once: true }); } catch (_) {}
+    try { document.addEventListener('registerExtensions', handler, { once: true }); } catch (_) {}
   }
 })();

@@ -2,99 +2,29 @@
   <h3>Fantastical Name Generator</h3>
   <label class="st-flex st-gap-1 st-ai-center">
     <input type="checkbox" id="fn_enable" />
-    <span>Use Function Tool</span>
+    <span>Enable Function Tool</span>
   </label>
-
-  <label class="st-flex st-gap-1 st-ai-center">
-    <input type="checkbox" id="fn_slash" />
-    <span>Enable /generateName slash command</span>
-  </label>
-
-  <label class="st-flex st-gap-1 st-ai-center">
-    <input type="checkbox" id="fn_prefer_cdn" />
-    <span>Prefer CDN auto-install (no local npm)</span>
-  </label>
-
-  <label class="st-flex st-col">
-    <span>CDN URL</span>
-    <input type="text" id="fn_cdn_url" placeholder="https://cdn.jsdelivr.net/npm/fantastical@latest/dist/index.js">
-  </label>
-
-  <label class="st-flex st-gap-1 st-ai-center">
-    <input type="checkbox" id="fn_cache" />
-    <span>Cache library in browser storage</span>
-  </label>
-
-  <label class="st-flex st-gap-1 st-ai-center">
-    <input type="checkbox" id="fn_toasts" />
-    <span>Show toasts on tool call</span>
-  </label>
-
-  <div class="st-flex st-gap-2 st-mt-1">
-    <button id="fn_save" class="menu_button">Save</button>
-    <button id="fn_clear_cache" class="menu_button">Clear Cache</button>
-    <button id="fn_test" class="menu_button">Test Load</button>
-  </div>
 
   <script>
     (function(){
-      // Lightweight compatibility for settings storage
       function getCtx(){
         try { if (typeof SillyTavern !== 'undefined' && typeof SillyTavern.getContext === 'function') return SillyTavern.getContext(); } catch(_){}
         try { if (typeof getContext === 'function') return getContext(); } catch(_){}
         return {};
       }
       const key = 'fantastical_namegen';
-      function get() {
-        const ctx = getCtx();
-        return (ctx.extensionSettings?.[key]) || {};
-      }
-      function set(values){
-        const ctx = getCtx();
-        if (!ctx.extensionSettings) ctx.extensionSettings = {};
-        ctx.extensionSettings[key] = { ...(get()), ...values };
-        ctx.saveSettingsDebounced?.();
-      }
+      function get(){ const ctx = getCtx(); return (ctx.extensionSettings?.[key]) || {}; }
+      function set(values){ const ctx = getCtx(); if(!ctx.extensionSettings) ctx.extensionSettings = {}; ctx.extensionSettings[key] = { ...(get()), ...values }; ctx.saveSettingsDebounced?.(); }
 
       function refresh(){
-        const s = Object.assign({
-          enableFunctionTool: true, enableSlashCommand: true, preferCDN: true, cdnUrl: 'https://cdn.jsdelivr.net/npm/fantastical@latest/dist/index.js', cacheModule: true, showToasts: true,
-        }, get());
+        const s = Object.assign({ enableFunctionTool: true }, get());
         document.getElementById('fn_enable').checked = !!s.enableFunctionTool;
-        document.getElementById('fn_slash').checked = !!s.enableSlashCommand;
-        document.getElementById('fn_prefer_cdn').checked = !!s.preferCDN;
-        document.getElementById('fn_cdn_url').value = s.cdnUrl || '';
-        document.getElementById('fn_cache').checked = !!s.cacheModule;
-        document.getElementById('fn_toasts').checked = !!s.showToasts;
       }
 
-      document.getElementById('fn_save').addEventListener('click', () => {
-        set({
-          enableFunctionTool: document.getElementById('fn_enable').checked,
-          enableSlashCommand: document.getElementById('fn_slash').checked,
-          preferCDN: document.getElementById('fn_prefer_cdn').checked,
-          cdnUrl: document.getElementById('fn_cdn_url').value,
-          cacheModule: document.getElementById('fn_cache').checked,
-          showToasts: document.getElementById('fn_toasts').checked,
-        });
-        // trigger re-register
+      document.getElementById('fn_enable').addEventListener('change', (e) => {
+        set({ enableFunctionTool: !!e.target.checked });
         globalThis.FantasticalNameGen?.reRegister?.();
         getCtx().toast?.('Fantastical settings saved');
-      });
-
-      document.getElementById('fn_clear_cache').addEventListener('click', async () => {
-        try { await localStorage.removeItem('ZhenyaPav/SillyTavern-Namegen:fantastical-src'); } catch (e) {}
-        getCtx().toast?.('Fantastical cache cleared');
-      });
-
-      document.getElementById('fn_test').addEventListener('click', async () => {
-        try {
-          await globalThis.FantasticalNameGen?.loadFantastical?.();
-          getCtx().toast?.('Fantastical module loaded OK');
-        } catch (e) {
-          getCtx().toast?.('Failed to load Fantastical – check console & URL');
-          console.error(e);
-        }
       });
 
       refresh();
