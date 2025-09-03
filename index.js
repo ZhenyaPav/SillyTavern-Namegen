@@ -5,6 +5,65 @@
 
 (function () {
   const EXT_ID = 'ZhenyaPav/SillyTavern-Namegen';
+  // Backward/forward compatible bridge to ST APIs (global and ctx-based)
+  const API = {
+    ctx() {
+      try {
+        if (typeof SillyTavern !== 'undefined' && typeof SillyTavern.getContext === 'function') return SillyTavern.getContext();
+      } catch (_) {}
+      try {
+        if (typeof getContext === 'function') return getContext();
+      } catch (_) {}
+      return {};
+    },
+    registerExtension(id, obj) {
+      try { if (typeof window !== 'undefined' && typeof window.registerExtension === 'function') return window.registerExtension(id, obj); } catch (_) {}
+      const c = this.ctx();
+      return c.registerExtension?.(id, obj);
+    },
+    registerFunctionTool(def) {
+      try { if (typeof window !== 'undefined' && typeof window.registerFunctionTool === 'function') return window.registerFunctionTool(def); } catch (_) {}
+      const c = this.ctx();
+      return c.registerFunctionTool?.(def);
+    },
+    unregisterFunctionTool(name) {
+      try { if (typeof window !== 'undefined' && typeof window.unregisterFunctionTool === 'function') return window.unregisterFunctionTool(name); } catch (_) {}
+      const c = this.ctx();
+      return c.unregisterFunctionTool?.(name);
+    },
+    registerSlashCommand(...args) {
+      try { if (typeof window !== 'undefined' && typeof window.registerSlashCommand === 'function') return window.registerSlashCommand(...args); } catch (_) {}
+      const c = this.ctx();
+      return c.registerSlashCommand?.(...args);
+    },
+    unregisterSlashCommand(name) {
+      try { if (typeof window !== 'undefined' && typeof window.unregisterSlashCommand === 'function') return window.unregisterSlashCommand(name); } catch (_) {}
+      const c = this.ctx();
+      return c.unregisterSlashCommand?.(name);
+    },
+    isToolCallingSupported() {
+      try { if (typeof window !== 'undefined' && typeof window.isToolCallingSupported === 'function') return window.isToolCallingSupported(); } catch (_) {}
+      const c = this.ctx();
+      return c.isToolCallingSupported?.();
+    },
+    toast(msg) {
+      const c = this.ctx();
+      try { return c.toast?.(msg); } catch (_) {}
+      try { if (typeof window !== 'undefined' && window.toastr?.info) return window.toastr.info(msg); } catch (_) {}
+    },
+    extensionSettings(ns) {
+      const c = this.ctx();
+      if (!c.extensionSettings) c.extensionSettings = {};
+      if (!c.saveSettingsDebounced) c.saveSettingsDebounced = () => {};
+      return c.extensionSettings[ns] || {};
+    },
+    setExtensionSettings(ns, values) {
+      const c = this.ctx();
+      if (!c.extensionSettings) c.extensionSettings = {};
+      c.extensionSettings[ns] = values;
+      c.saveSettingsDebounced?.();
+    }
+  };
   const SETTINGS_KEY = 'fantastical_namegen';
   const DEFAULTS = {
     enableFunctionTool: true,
@@ -17,15 +76,12 @@
 
   /** Utility: read/write extension settings */
   function getSettings() {
-    const ctx = SillyTavern.getContext();
-    const store = ctx.extensionSettings?.[SETTINGS_KEY] || {};
+    const store = API.extensionSettings(SETTINGS_KEY) || {};
     return { ...DEFAULTS, ...store };
   }
   function setSettings(partial) {
-    const ctx = SillyTavern.getContext();
     const merged = { ...getSettings(), ...partial };
-    ctx.extensionSettings[SETTINGS_KEY] = merged;
-    ctx.saveSettingsDebounced?.();
+    API.setExtensionSettings(SETTINGS_KEY, merged);
   }
 
   /** Simple args parser for the /name slash command */
@@ -92,11 +148,11 @@
 
   /** Register the /name slash command */
   function registerSlash() {
-    const ctx = SillyTavern.getContext();
+    const ctx = API.ctx();
     const settings = getSettings();
     if (!settings.enableSlashCommand) return;
 
-    const help = 'Generate fantasy names. Usage: /name [category] <type> [count] [gender] [--multi] or flags: --cat <category> --type <type> --count <n> --gender <g>';
+    const help = 'Generate fantasy names. Usage: /generateName [category] <type> [count] [gender] [--multi] or flags: --cat <category> --type <type> --count <n> --gender <g>';
 
     const handler = async (argsStr = '') => {
       try {
@@ -112,8 +168,8 @@
 
     try {
       // Form 1: name, handler, options
-      if (typeof ctx.registerSlashCommand === 'function') {
-        ctx.registerSlashCommand('name', handler, { help, aliases: ['fname'] });
+      if (typeof API.registerSlashCommand === 'function' || ctx.registerSlashCommand) {
+        API.registerSlashCommand('generateName', handler, { help, aliases: ['fname'] });
         return;
       }
     } catch (e) {
@@ -122,8 +178,8 @@
 
     try {
       // Form 2: object descriptor
-      ctx.registerSlashCommand?.({
-        name: 'name',
+      API.registerSlashCommand?.({
+        name: 'generateName',
         aliases: ['fname'],
         description: help,
         callback: handler,
@@ -258,17 +314,18 @@
 
   /** Register the Function Tool */
   function registerTool() {
-    const ctx = SillyTavern.getContext();
+    const ctx = API.ctx();
     const settings = getSettings();
 
-    if (!ctx.isToolCallingSupported?.()) {
+    const supported = API.isToolCallingSupported?.();
+    if (supported === false) {
       console.warn('[Fantastical] Tool calling not supported or disabled.');
       return;
     }
 
     if (!settings.enableFunctionTool) return;
 
-    ctx.registerFunctionTool({
+    API.registerFunctionTool({
       name: 'fantasyName.generate',
       displayName: 'Generate Fantasy Name(s)',
       description: 'Generate fantasy names (species, parties, places, adventures) using the fantastical library. Use when the user asks for a fantasy name.',
@@ -308,7 +365,7 @@
         const { showToasts } = getSettings();
         try {
           const names = await generateNames(args);
-          if (showToasts) SillyTavern.getContext().toast?.('Generated fantasy name(s)');
+          if (showToasts) API.toast('Generated fantasy name(s)');
           // Return as newline-joined string so it is readable in chat
           return names.join('\n');
         } catch (err) {
@@ -328,8 +385,8 @@
   /** UI hook for settings panel to refresh registration on toggle */
   function reRegister() {
     // Unregister by name then re-register
-    try { SillyTavern.getContext().unregisterFunctionTool?.('fantasyName.generate'); } catch (_) {}
-    try { SillyTavern.getContext().unregisterSlashCommand?.('name'); } catch (_) {}
+    try { API.unregisterFunctionTool?.('fantasyName.generate'); } catch (_) {}
+    try { API.unregisterSlashCommand?.('generateName'); } catch (_) {}
     registerTool();
     registerSlash();
   }
@@ -344,15 +401,17 @@
 
   // Register into the Extensions panel
   try {
-    SillyTavern.getContext().registerExtension?.(EXT_ID, {
+    API.registerExtension?.(EXT_ID, {
       name: 'Fantastical Name Generator',
       async init() { await init(); },
       settings: {
         get: getSettings,
         set: setSettings,
+        // Some ST builds display a HTML settings page when provided
+        html: 'settings.html',
       },
       onSettingsChange() { reRegister(); },
-    });
+    }) || init();
   } catch (err) {
     console.error('[Fantastical] Failed to register extension scaffold', err);
     // Fallback: just init

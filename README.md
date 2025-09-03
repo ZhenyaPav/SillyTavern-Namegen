@@ -22,17 +22,17 @@ Adds a **Function Tool** called `fantasyName.generate` that uses the [`fantastic
 - **Show toasts** – UI notifications on tool calls.
 
 ## Slash Command
-Type `/name` in the chat input to generate names without tool-calling.
+Type `/generateName` in the chat input to generate names without tool-calling.
 
 Usage
-- `/name [category] <type> [count] [gender] [--multi]`
+- `/generateName [category] <type> [count] [gender] [--multi]`
 - Flags: `--cat <category> --type <type> --count <n> --gender <g> --multi`
 
 Examples
-- `/name elf 5 female` → 5 female elf names (category defaults to `species`)
-- `/name species dwarf 3` → 3 dwarf names
-- `/name places tavern 2` → 2 tavern names
-- `/name --cat parties --type guild --count 3` → 3 guild names
+- `/generateName elf 5 female` → 5 female elf names (category defaults to `species`)
+- `/generateName species dwarf 3` → 3 dwarf names
+- `/generateName places tavern 2` → 2 tavern names
+- `/generateName --cat parties --type guild --count 3` → 3 guild names
 
 ## Function Tool
 **Name:** `fantasyName.generate`
