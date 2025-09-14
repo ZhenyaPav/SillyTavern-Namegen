@@ -7,7 +7,9 @@ import { SlashCommandParser } from '../../../slash-commands/SlashCommandParser.j
 export { MODULE_NAME };
 
 const MODULE_NAME = 'namegen';
-const TEMPLATE_PATH = 'third-party/SillyTavern-Namegen';
+// Prefer the README-recommended folder, but handle case-variant installs too
+const PRIMARY_PATH = 'third-party/SillyTavern-Namegen';
+const ALT_PATH = 'third-party/SillyTavern-NameGen';
 
 const defaultSettings = Object.freeze({
     functionTool: false,
@@ -45,9 +47,23 @@ async function ensureFantasticalLoaded() {
             script.onerror = () => reject(new Error('Failed to load ' + src));
             document.head.appendChild(script);
         });
-        const localUrl = `/${TEMPLATE_PATH}/lib/fantastical.js`;
+        const candidates = [
+            `/${PRIMARY_PATH}/lib/fantastical.js`,
+            `/${ALT_PATH}/lib/fantastical.js`,
+        ];
         // Only load the vendored local copy; do not hit external CDNs at runtime
-        await loadScript(localUrl);
+        let loaded = false;
+        let lastError;
+        for (const url of candidates) {
+            try {
+                await loadScript(url);
+                loaded = true;
+                break;
+            } catch (e) {
+                lastError = e;
+            }
+        }
+        if (!loaded) throw lastError || new Error('Failed to load fantastical lib');
 
         const lib = window.fantastical || (window.exports && window.exports.fantastical) || undefined;
         if (!lib) throw new Error('Fantastical not found after loading local copy');
@@ -147,7 +163,18 @@ async function generateName(kind, gender, options = {}) {
 }
 
 async function addSettingsPanel() {
-    const settingsHtml = await renderExtensionTemplateAsync(TEMPLATE_PATH, 'settings');
+    let settingsHtml;
+    try {
+        settingsHtml = await renderExtensionTemplateAsync(PRIMARY_PATH, 'settings');
+    } catch (err) {
+        try {
+            settingsHtml = await renderExtensionTemplateAsync(ALT_PATH, 'settings');
+        } catch (err2) {
+            console.error('NameGen: Failed to load settings template from both paths', err, err2);
+            toastr.error('NameGen: Could not load settings panel');
+            return;
+        }
+    }
     const getSettingsContainer = () => $(document.getElementById('namegen_container') ?? document.getElementById('extensions_settings2'));
     getSettingsContainer().append(settingsHtml);
 
