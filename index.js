@@ -26,6 +26,54 @@ const defaultSettings = Object.freeze({
     functionTool: false,
 });
 
+function insertNameIntoInput(text, { spaced = true } = {}) {
+    try {
+        const candidates = [
+            '#send_textarea',
+            'textarea#send_textarea',
+            '#chat-input',
+            'textarea:visible:enabled',
+            'textarea',
+        ];
+        let $el = null;
+        for (const sel of candidates) {
+            const $cand = $(sel).filter(':visible');
+            if ($cand && $cand.length) { $el = $cand.eq(0); break; }
+        }
+        if (!$el || !$el.length) return false;
+
+        const el = $el[0];
+
+        // Handle contentEditable fallback
+        if (el.isContentEditable) {
+            const selection = window.getSelection();
+            if (!selection) return false;
+            const insert = spaced ? (text.startsWith(' ') ? text : ' ' + text) : text;
+            document.execCommand('insertText', false, insert);
+            $el.trigger('input');
+            return true;
+        }
+
+        const current = String($el.val() ?? '');
+        const start = typeof el.selectionStart === 'number' ? el.selectionStart : current.length;
+        const end = typeof el.selectionEnd === 'number' ? el.selectionEnd : start;
+        const before = current.slice(0, start);
+        const after = current.slice(end);
+        const needsSpaceBefore = spaced && before && !/\s$/.test(before);
+        const needsSpaceAfter = spaced && after && !/^\s/.test(after);
+        const insert = (needsSpaceBefore ? ' ' : '') + text + (needsSpaceAfter ? ' ' : '');
+        const updated = before + insert + after;
+        $el.val(updated).trigger('input');
+        const newPos = (before + insert).length;
+        try { el.selectionStart = el.selectionEnd = newPos; } catch {}
+        $el.focus();
+        return true;
+    } catch (e) {
+        console.error('NameGen: failed to insert into input', e);
+        return false;
+    }
+}
+
 function getSettings() {
     const { extensionSettings } = SillyTavern.getContext();
 
@@ -269,6 +317,13 @@ jQuery(async function () {
                 ? String(args.allowMultipleNames).toLowerCase() === 'true'
                 : undefined;
             const result = await generateName(kind, gender, { allowMultipleNames });
+            if (result) {
+                const inserted = insertNameIntoInput(result, { spaced: true });
+                if (inserted) {
+                    toastr.success(`Inserted name: ${result}`);
+                    return '';
+                }
+            }
             return result;
         },
         helpString: 'Generate a fantasy name (e.g., /generateName elf --gender female --allowMultipleNames true).',
