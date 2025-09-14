@@ -45,29 +45,12 @@ async function ensureFantasticalLoaded() {
             script.onerror = () => reject(new Error('Failed to load ' + src));
             document.head.appendChild(script);
         });
-
         const localUrl = `/${TEMPLATE_PATH}/lib/fantastical.js`;
-        const cdnUrls = [
-            'https://cdn.jsdelivr.net/npm/fantastical@2.0.1/dist/index.js',
-            'https://unpkg.com/fantastical@2.0.1/dist/index.js',
-        ];
-
-        const tryUrls = [localUrl, ...cdnUrls];
-        let lastError;
-        for (const url of tryUrls) {
-            try {
-                await loadScript(url);
-                break;
-            } catch (err) {
-                lastError = err;
-            }
-        }
+        // Only load the vendored local copy; do not hit external CDNs at runtime
+        await loadScript(localUrl);
 
         const lib = window.fantastical || (window.exports && window.exports.fantastical) || undefined;
-        if (!lib) {
-            if (lastError) throw lastError;
-            throw new Error('Fantastical not found after loading attempts');
-        }
+        if (!lib) throw new Error('Fantastical not found after loading local copy');
 
         SillyTavern.libs.fantastical = lib;
         return lib;
@@ -95,6 +78,12 @@ function resolveGenerator(kind) {
         half_elf: 'halfelf',
         high_fairy: 'highfairy',
         cave_person: 'cavePerson',
+        // settlements (aliases)
+        town: 'settlement/town',
+        city: 'settlement/city',
+        village: 'settlement/village',
+        hamlet: 'settlement/hamlet',
+        settlement: 'settlement/any',
     };
 
     const k = String(kind).trim();
@@ -106,10 +95,26 @@ function resolveGenerator(kind) {
     return k; // try raw provided name
 }
 
-async function generateName(kind, gender) {
+function normalizeGender(g) {
+    const s = String(g || '').trim().toLowerCase();
+    if (['m', 'male', 'man', 'masc', 'boy'].includes(s)) return 'male';
+    if (['f', 'female', 'woman', 'fem', 'girl'].includes(s)) return 'female';
+    return undefined;
+}
+
+async function generateName(kind, gender, options = {}) {
     const api = await ensureFantasticalLoaded();
 
     const resolved = resolveGenerator(kind);
+
+    // Settlements: use the library's human generator as requested
+    if (resolved?.startsWith('settlement/')) {
+        const genderArg = normalizeGender(gender);
+        // prefer multi-word options for variety (can be overridden)
+        const allowMultipleNames = options.allowMultipleNames ?? true;
+        return api.human({ allowMultipleNames, gender: genderArg });
+    }
+
     let fn = api[resolved];
 
     if (typeof fn !== 'function') {
@@ -117,13 +122,22 @@ async function generateName(kind, gender) {
         fn = api.human;
     }
 
-    // Many species accept an optional gender; if provided use it, else default to 'male'
-    const gen = String(gender || '').toLowerCase();
-    const genderArg = gen === 'female' ? 'female' : gen === 'male' ? 'male' : 'male';
-
-    // Heuristic: If function expects any args, pass gender
+    // Normalize gender and only pass it to species that take a gendered arg
+    const genderArg = normalizeGender(gender);
     try {
-        const name = fn.length > 0 ? fn(genderArg) : fn();
+        let name;
+        if (resolved === 'human') {
+            // Pass gender in the options object even though the library ignores it
+            const allowMultipleNames = options.allowMultipleNames ?? false;
+            name = fn({ allowMultipleNames, gender: genderArg });
+        } else if (fn.length >= 1 && genderArg) {
+            name = fn(genderArg);
+        } else if (fn.length === 0) {
+            name = fn();
+        } else {
+            // function expects an argument but no valid gender; try calling without
+            name = fn();
+        }
         return String(name || '').trim();
     } catch (error) {
         console.error('NameGen: error generating name', error);
@@ -173,18 +187,23 @@ function registerFunctionTools() {
                     description: 'Gender for species that support it',
                     enum: ['male', 'female'],
                 },
+                allowMultipleNames: {
+                    type: 'boolean',
+                    description: 'For kind=human or settlements: allow multiple human-style name parts (defaults: human=false, settlements=true).',
+                },
             },
         });
 
         registerFunctionTool({
             name: 'GenerateName',
             displayName: 'Name Generator',
-            description: 'Generates a fantasy-style name using the fantastical library.',
+            description: 'Generates a fantasy-style name using the fantastical library. Optional: allowMultipleNames (boolean) for human/settlements.',
             parameters: schema,
             action: async (args) => {
                 const kind = args?.kind || 'human';
-                const gender = args?.gender || 'male';
-                const name = await generateName(kind, gender);
+                const gender = args?.gender; // leave undefined when not provided
+                const allowMultipleNames = typeof args?.allowMultipleNames === 'boolean' ? args.allowMultipleNames : undefined;
+                const name = await generateName(kind, gender, { allowMultipleNames });
                 return name || 'Unknown';
             },
             formatMessage: () => '',
@@ -203,11 +222,14 @@ jQuery(async function () {
         aliases: ['genname', 'name'],
         callback: async (args, value) => {
             const kind = String(value || args.kind || 'human');
-            const gender = String(args.gender || 'male');
-            const result = await generateName(kind, gender);
+            const gender = args.gender ? String(args.gender) : undefined;
+            const allowMultipleNames = args.allowMultipleNames !== undefined
+                ? String(args.allowMultipleNames).toLowerCase() === 'true'
+                : undefined;
+            const result = await generateName(kind, gender, { allowMultipleNames });
             return result;
         },
-        helpString: 'Generate a fantasy name (e.g., /generateName elf --gender female).',
+        helpString: 'Generate a fantasy name (e.g., /generateName elf --gender female --allowMultipleNames true).',
         returns: 'generated name',
         namedArgumentList: [
             SlashCommandNamedArgument.fromProps({
@@ -224,6 +246,13 @@ jQuery(async function () {
                 isRequired: false,
                 typeList: [ARGUMENT_TYPE.STRING],
             }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'allowMultipleNames',
+                description: 'For human/settlements: allow multi-part names (true/false).',
+                isRequired: false,
+                typeList: [ARGUMENT_TYPE.STRING],
+                enumProvider: commonEnumProviders.string(['true', 'false']),
+            }),
         ],
         unnamedArgumentList: [
             SlashCommandArgument.fromProps({
@@ -234,4 +263,3 @@ jQuery(async function () {
         ],
     }));
 });
-

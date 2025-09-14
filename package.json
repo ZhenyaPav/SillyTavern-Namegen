@@ -5,7 +5,6 @@
   "description": "SillyTavern extension for generating names using fantastical",
   "license": "MIT",
   "scripts": {
-    "fetch:fantastical": "mkdir -p lib && npx --yes download-cli https://cdn.jsdelivr.net/npm/fantastical@2.0.1/dist/index.js lib/fantastical.js || curl -fsSL https://cdn.jsdelivr.net/npm/fantastical@2.0.1/dist/index.js -o lib/fantastical.js"
+    "fetch:fantastical": "mkdir -p lib && curl -fsSL https://cdn.jsdelivr.net/npm/fantastical@2.0.1/dist/index.js -o lib/fantastical.js || wget -qO lib/fantastical.js https://cdn.jsdelivr.net/npm/fantastical@2.0.1/dist/index.js"
   }
 }
-
