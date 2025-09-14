@@ -3,6 +3,7 @@ import { SlashCommand } from '../../../slash-commands/SlashCommand.js';
 import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from '../../../slash-commands/SlashCommandArgument.js';
 import { commonEnumProviders } from '../../../slash-commands/SlashCommandCommonEnumsProvider.js';
 import { SlashCommandParser } from '../../../slash-commands/SlashCommandParser.js';
+import { SlashCommandEnumValue, enumTypes } from '../../../slash-commands/SlashCommandEnumValue.js';
 
 export { MODULE_NAME };
 
@@ -10,6 +11,16 @@ const MODULE_NAME = 'namegen';
 // Prefer the README-recommended folder, but handle case-variant installs too
 const PRIMARY_PATH = 'third-party/SillyTavern-Namegen';
 const ALT_PATH = 'third-party/SillyTavern-NameGen';
+// Compute the served base URL of this extension to reliably load sibling assets
+const BASE_URL = (() => {
+    try {
+        const url = new URL('.', import.meta?.url || '');
+        return url.pathname.endsWith('/') ? url.pathname : url.pathname + '/';
+    } catch {
+        // Fallback to expected served path prefix when import.meta.url is unavailable
+        return `/scripts/extensions/${PRIMARY_PATH}/`;
+    }
+})();
 
 const defaultSettings = Object.freeze({
     functionTool: false,
@@ -48,6 +59,10 @@ async function ensureFantasticalLoaded() {
             document.head.appendChild(script);
         });
         const candidates = [
+            `${BASE_URL}lib/fantastical.js`,
+            // Fallbacks for unusual serve paths
+            `/scripts/extensions/${PRIMARY_PATH}/lib/fantastical.js`,
+            `/scripts/extensions/${ALT_PATH}/lib/fantastical.js`,
             `/${PRIMARY_PATH}/lib/fantastical.js`,
             `/${ALT_PATH}/lib/fantastical.js`,
         ];
@@ -265,7 +280,11 @@ jQuery(async function () {
                 isRequired: false,
                 typeList: [ARGUMENT_TYPE.STRING],
                 defaultValue: 'male',
-                enumProvider: commonEnumProviders.string(['male', 'female']),
+                // Provide a static string enum provider compatible with current ST versions
+                enumProvider: (() => {
+                    const values = ['male', 'female'];
+                    return () => values.map(v => new SlashCommandEnumValue(v, v, enumTypes.string));
+                })(),
             }),
             SlashCommandNamedArgument.fromProps({
                 name: 'kind',
@@ -278,7 +297,10 @@ jQuery(async function () {
                 description: 'For human/settlements: allow multi-part names (true/false).',
                 isRequired: false,
                 typeList: [ARGUMENT_TYPE.STRING],
-                enumProvider: commonEnumProviders.string(['true', 'false']),
+                enumProvider: (() => {
+                    const values = ['true', 'false'];
+                    return () => values.map(v => new SlashCommandEnumValue(v, v, enumTypes.string));
+                })(),
             }),
         ],
         unnamedArgumentList: [
